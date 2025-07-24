@@ -94,15 +94,20 @@ def train(
     # TODO: YOUR CODE HERE
     # Implement the BPE algorithm here using your previous calculations
     while len(vocab) < vocab_size and consecutive_pair_counts:
-        max_pair = max(consecutive_pair_counts,
-                       key=consecutive_pair_counts.get)
+        max_count = max(consecutive_pair_counts.values())
+        # Get all pairs with the max count
+        max_pairs = [
+            pair for pair, count in consecutive_pair_counts.items() if count == max_count]
+        # Break ties lexicographically
+        max_pair = max(max_pairs)
         new_token = max_pair[0] + max_pair[1]
         merges.append(max_pair)
         vocab[len(vocab)] = new_token
 
         for word in pre_token_counts:
             for token_tuple, count in list(word.items()):
-                for i in range(len(token_tuple) - 1):
+                i = 0
+                while i < len(token_tuple) - 1:
                     if (token_tuple[i], token_tuple[i+1]) == max_pair:
                         # Decrement the merged pair
                         consecutive_pair_counts[max_pair] -= count
@@ -137,9 +142,12 @@ def train(
                         new_tuple = tuple(token_list)
                         word[new_tuple] = count
                         del word[token_tuple]
-
+                        token_tuple = new_tuple
                         # After merging, do not increment i (since the tuple is now shorter)
-                        i -= 1
+                        if i > 0:
+                            i -= 1
+                    else:
+                        i += 1
 
     print(vocab)
 
@@ -147,11 +155,64 @@ def train(
 
 
 if __name__ == "__main__":
+    import json
+
+    from tests import gpt2_bytes_to_unicode
     input_path = pathlib.Path(
-        __file__).resolve().parent / "data" / "sample.txt"
-    _, _ = train(
+        __file__).resolve().parent / "data" / "corpus.txt"
+    vocab, merges = train(
         input_path=input_path,
         vocab_size=500,
         special_tokens=["<|endoftext|>"],
     )
+
+    # Load reference merges
+    reference_merges_path = pathlib.Path(__file__).resolve(
+    ).parent / "data" / "train-bpe-reference-merges.txt"
+    gpt2_byte_decoder = {v: k for k, v in gpt2_bytes_to_unicode().items()}
+    with open(reference_merges_path) as f:
+        gpt2_reference_merges = [tuple(line.rstrip().split(" ")) for line in f]
+        reference_merges = [
+            (
+                bytes([gpt2_byte_decoder[token] for token in merge_token_1]),
+                bytes([gpt2_byte_decoder[token] for token in merge_token_2]),
+            )
+            for merge_token_1, merge_token_2 in gpt2_reference_merges
+        ]
+
+    # Compare merges
+    for i, (m, r) in enumerate(zip(merges, reference_merges)):
+        if m != r:
+            print(f"First merge difference at index {i}:")
+            print(f"  Your merge:      {m}")
+            print(f"  Reference merge: {r}")
+            break
+    else:
+        if len(merges) != len(reference_merges):
+            print(
+                f"Different number of merges: yours={len(merges)}, reference={len(reference_merges)}")
+        else:
+            print("All merges match.")
+
+    # Load reference vocab
+    reference_vocab_path = pathlib.Path(__file__).resolve(
+    ).parent / "data" / "train-bpe-reference-vocab.json"
+    with open(reference_vocab_path) as f:
+        gpt2_reference_vocab = json.load(f)
+        reference_vocab = {
+            gpt2_vocab_index: bytes([gpt2_byte_decoder[token]
+                                    for token in gpt2_vocab_item])
+            for gpt2_vocab_item, gpt2_vocab_index in gpt2_reference_vocab.items()
+        }
+    your_vocab_set = set(vocab.values())
+    ref_vocab_set = set(reference_vocab.values())
+    if your_vocab_set != ref_vocab_set:
+        print("Vocab differences:")
+        print("In your vocab but not in reference:",
+              your_vocab_set - ref_vocab_set)
+        print("In reference but not in your vocab:",
+              ref_vocab_set - your_vocab_set)
+    else:
+        print("Vocab sets match.")
+
     print("Done!")
